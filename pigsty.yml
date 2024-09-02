@@ -9,27 +9,38 @@
 # License   :   AGPLv3
 #==============================================================#
 
+# 每一套 Pigsty 部署都有一个相应的 配置清单（Inventory）。
+# 它可以以 YAML 的形式存储在本地，并使用 git 管理；或从 CMDB 或任何 ansible 兼容的方式动态生成。
+# Pigsty 默认使用一个名为 pigsty.yml 的单体 YAML 配置文件作为默认的配置清单
+
 # Config Templates: https://github.com/Vonng/pigsty/tree/master/conf
 
 all:
+  # 后者 all.children 则负责定义新的集群（PGSQL/Redis/MinIO/ETCD等等）
   children:
 
     # infra cluster for proxy, monitor, alert, etc..
-    infra: { hosts: { 10.10.10.10: { infra_seq: 1 } }}
+    # 基础设施组件的配置组参数,本地软件源，Nginx，DNSMasq，Prometheus，Grafana，Loki，Alertmanager，Pushgateway，Blackbox_exporter 等
+    infra: { hosts: { 10.10.10.10: { infra_seq: 1 } }}  # 组定义：'infra'
 
     # etcd cluster for ha postgres
-    etcd: { hosts: { 10.10.10.10: { etcd_seq: 1 } }, vars: { etcd_cluster: etcd } }
+    etcd: { hosts: { 10.10.10.10: { etcd_seq: 1 } }, vars: { etcd_cluster: etcd } } # 组定义：'etcd'
 
     # minio cluster, s3 compatible object storage
-    minio: { hosts: { 10.10.10.10: { minio_seq: 1 } }, vars: { minio_cluster: minio } }
+    minio: { hosts: { 10.10.10.10: { minio_seq: 1 } }, vars: { minio_cluster: minio } }  # 组定义：'minio'
 
     # postgres example cluster: pg-meta
+    # 每个组定义通常代表一个集群，可以是节点集群、PostgreSQL 集群、Redis 集群、Etcd 集群或 Minio 集群等
+    # 它们都使用相同的格式：hosts 和 vars。 你可以用 all.children.<cls>.hosts 定义集群成员，并使用 all.children.<cls>.vars 中的集群参数描述集群。以下是名为 pg-test 的三节点 PostgreSQL 高可用集群的
+    # postgres example cluster: pg-meta
     pg-meta:
-      hosts: { 10.10.10.10: { pg_seq: 1, pg_role: primary } }
-      vars:
-        pg_cluster: pg-meta
+      # 集群成员
+      hosts: { 10.10.10.10: { pg_seq: 1, pg_role: primary } }  # 实例1，在 10.10.10.10 上，主库
+      vars:   # 集群参数
+        # 如果没有显式配置 pg_version ，默认值 16 版本号会作为最后兜底的缺省值
+        pg_cluster: pg-meta  # 集群名称
         pg_users:
-          - {name: dbuser_meta     ,password: DBUser.Meta     ,pgbouncer: true ,roles: [dbrole_admin]    ,comment: pigsty admin user }
+          - {name: dbuser_meta     ,password: DBUser.Meta     ,pgbouncer: true ,roles: [dbrole_admin]    ,comment: pigsty admin user } # 可选，默认为 false，将此用户添加到 pgbouncer 用户列表吗？（使用连接池的生产用户应该显式定义为 true） 此用户/角色的说明与备注字符串
           - {name: dbuser_view     ,password: DBUser.Viewer   ,pgbouncer: true ,roles: [dbrole_readonly] ,comment: read-only viewer for meta database }
           - {name: dbuser_grafana  ,password: DBUser.Grafana  ,pgbouncer: true ,roles: [dbrole_admin]    ,comment: admin user for grafana database    }
           - {name: dbuser_bytebase ,password: DBUser.Bytebase ,pgbouncer: true ,roles: [dbrole_admin]    ,comment: admin user for bytebase database   }
@@ -37,7 +48,7 @@ all:
           - {name: dbuser_gitea    ,password: DBUser.Gitea    ,pgbouncer: true ,roles: [dbrole_admin]    ,comment: admin user for gitea service       }
           - {name: dbuser_wiki     ,password: DBUser.Wiki     ,pgbouncer: true ,roles: [dbrole_admin]    ,comment: admin user for wiki.js service     }
           - {name: dbuser_noco     ,password: DBUser.Noco     ,pgbouncer: true ,roles: [dbrole_admin]    ,comment: admin user for nocodb service      }
-        pg_databases:
+        pg_databases: # PostgreSQL 业务数据库列表，需要在 PG 集群层面进行定义。默认值为：[] 空列表。
           - {name: meta ,baseline: cmdb.sql ,comment: pigsty meta database ,schemas: [pigsty] ,extensions: [{name: postgis, schema: public}, {name: timescaledb}]}
           - {name: grafana  ,owner: dbuser_grafana  ,revokeconn: true ,comment: grafana primary database }
           - {name: bytebase ,owner: dbuser_bytebase ,revokeconn: true ,comment: bytebase primary database }
@@ -45,10 +56,10 @@ all:
           - {name: gitea    ,owner: dbuser_gitea    ,revokeconn: true ,comment: gitea meta database }
           - {name: wiki     ,owner: dbuser_wiki     ,revokeconn: true ,comment: wiki meta database }
           - {name: noco     ,owner: dbuser_noco     ,revokeconn: true ,comment: nocodb database }
-        pg_hba_rules:
+        pg_hba_rules: # Pgbouncer 业务HBA规则
           - {user: dbuser_view , db: all ,addr: infra ,auth: pwd ,title: 'allow grafana dashboard access cmdb from infra nodes'}
-        pg_libs: 'timescaledb, pg_stat_statements, auto_explain'
-        pg_extensions: [ postgis, timescaledb, pgvector ]
+        pg_libs: 'timescaledb, pg_stat_statements, auto_explain'  # 预加载的动态共享库，默认为 pg_stat_statements,auto_explain，这是两个 PostgreSQL 自带的扩展，强烈建议启用。
+        pg_extensions: [ postgis, timescaledb, pgvector ]  # 要安装的 PostgreSQL 扩展，${pg_version} 将被替换为具体的PG大版本号： pg_version。
         #  - timescaledb periods temporal_tables emaj table_version pg_cron pg_later pg_background pg_timetable
         #  - postgis pgrouting pointcloud pg_h3 q3c ogr_fdw geoip #pg_geohash #mobilitydb
         #  - pgvector pgvectorscale pg_vectorize pg_similarity pg_tiktoken pgml #smlar
@@ -66,30 +77,42 @@ all:
         #  - orafce pgtt session_variable pg_statement_rollback pg_dbms_metadata pg_dbms_lock pgmemcache #pg_dbms_job #wiltondb
         #  - pglogical pgl_ddl_deploy pg_failover_slots wal2json wal2mongo decoderbufs decoder_raw mimeo pgcopydb pgloader pg_fact_loader pg_bulkload pg_comparator pgimportdoc pgexportdoc #repmgr #slony
         #  - gis-stack rag-stack fdw-stack fts-stack etl-stack feat-stack olap-stack supa-stack stat-stack json-stack
-        pg_vip_enabled: true
-        pg_vip_address: 10.10.10.2/24
-        pg_vip_interface: eth1
-        node_crontab:  # make one full backup 1 am everyday
+        pg_vip_enabled: true # 启用 L2 VIP 后，会有一个 VIP 绑定在集群主实例节点上，由 vip-manager 管理，根据 etcd 中的数据进行判断。
+        pg_vip_address: 10.10.10.2/24 # 如果启用vip，则需要<ipv4>/<mask>格式的vip地址。
+        pg_vip_interface: eth1  # L2 VIP 监听的网卡接口，默认为 eth0
+        node_crontab:  # make one full backup 1 am everyday  # 定义在节点 /etc/crontab 中的定时任务：默认值为：[] 空数组。
           - '00 01 * * * postgres /pg/bin/pg-backup full'
 
+    # 组定义：'redis-test'
     redis-ms: # redis classic primary & replica
       hosts: { 10.10.10.10: { redis_node: 1 , redis_instances: { 6379: { }, 6380: { replica_of: '10.10.10.10 6379' } } } }
       vars: { redis_cluster: redis-ms ,redis_password: 'redis.ms' ,redis_max_memory: 64MB }
-
-  vars:                               # global variables
-    version: v3.0.0                   # pigsty version string
-    admin_ip: 10.10.10.10             # admin node ip address
-    region: default                   # upstream mirror region: default|china|europe
+  # 清单由两部分组成：全局变量 和多个 组定义 。 前者 all.vars 通常用于描述基础设施，并为集群设置全局默认参数。
+  # 这一小节指定了一套 Pigsty 部署的元数据：包括版本号，管理员节点 IP 地址，软件源镜像上游区域 和下载软件包时使用的 http(s) 代理。
+  vars:                               # global variables/全局参数
+    version: v3.0.0                   # pigsty version string/版本字符串
+    admin_ip: 10.10.10.10             # admin node ip address/管理节点IP地址
+    region: default                   # upstream mirror region: default|china|europe  / 上游镜像区域：default,china,europe
+    # 全局HTTPS代理，用于下载、安装软件包。下载包时使用的全局代理环境变量，默认值指定了 no_proxy，即不使用代理的地址列表：
+    proxy_env:
+     no_proxy: "localhost,127.0.0.1,10.0.0.0/8,192.168.0.0/16,*.pigsty,*.aliyun.com,mirrors.aliyuncs.com,mirrors.tuna.tsinghua.edu.cn,mirrors.zju.edu.cn"
+     #http_proxy: 'http://username:password@proxy.address.com'
+     #https_proxy: 'http://username:password@proxy.address.com'
+     #all_proxy: 'http://username:password@proxy.address.com'
     node_tune: tiny                   # oltp|olap|tiny|cirt
     pg_conf: tiny.yml                 # oltp.yml|olap.yml|tiny.yml|cirt.yml
+
+    # 通过Nginx门户暴露的基础设施服务列表，默认情况下，Pigsty 会通过 Nginx 对外暴露以下服务：
+    # Pigsty 会通过 Nginx 代理所有的 Web 服务访问：Home Page、Grafana、Prometheus、AlertManager 等等。 
+    # 以及其他可选的工具，如 PGWe、Jupyter Lab、Pgadmin、Bytebase 等等，还有一些静态资源和报告，如 pev、schemaspy 和 pgbadger。
     infra_portal:                     # domain names and upstream servers
       home         : { domain: h.pigsty }
-      grafana      : { domain: g.pigsty ,endpoint: "${admin_ip}:3000" , websocket: true }
-      prometheus   : { domain: p.pigsty ,endpoint: "${admin_ip}:9090" }
+      grafana      : { domain: g.pigsty ,endpoint: "${admin_ip}:3000" , websocket: true } # Pigsty 使用 Grafana 作为监控系统前端。它也可以做为数据分析与可视化平台，或者用于低代码数据应用开发，制作数据应用原型等目的。
+      prometheus   : { domain: p.pigsty ,endpoint: "${admin_ip}:9090" } # Prometheus 被用作时序数据库，用于存储和分析监控指标数据，进行指标预计算，评估告警规则。
       alertmanager : { domain: a.pigsty ,endpoint: "${admin_ip}:9093" }
       blackbox     : { endpoint: "${admin_ip}:9115" }
-      loki         : { endpoint: "${admin_ip}:3100" }
-      minio        : { domain: sss.pigsty  ,endpoint: "${admin_ip}:9001" ,scheme: https ,websocket: true }
+      loki         : { endpoint: "${admin_ip}:3100" }  # Loki 是Grafana提供的轻量级日志收集/检索平台，它可以提供一个集中查询服务器/数据库日志的地方。
+      minio        : { domain: sss.pigsty  ,endpoint: "${admin_ip}:9001" ,scheme: https ,websocket: true } # MinIO 是一个与S3兼容的对象存储服务，它被用作PostgreSQL的可选的集中式备份存储库。但你也可以将其用于其他目的，如存储大文件、文档、图片和视频。
       postgrest    : { domain: api.pigsty  ,endpoint: "127.0.0.1:8884" }
       pgadmin      : { domain: adm.pigsty  ,endpoint: "127.0.0.1:8885" }
       pgweb        : { domain: cli.pigsty  ,endpoint: "127.0.0.1:8886" }
@@ -101,7 +124,7 @@ all:
       supa         : { domain: supa.pigsty ,endpoint: "10.10.10.10:8000", websocket: true }
       dify         : { domain: dify.pigsty ,endpoint: "10.10.10.10:8001", websocket: true }
 
-    nginx_navbar:                    # application nav links on home page
+    nginx_navbar:                    # application nav links on home page  Nginx 首页上的导航栏内容，默认值：
       - { name: PgAdmin4   , url : 'http://adm.pigsty'  , comment: 'PgAdmin4 for PostgreSQL'  }
       - { name: PGWeb      , url : 'http://cli.pigsty'  , comment: 'PGWEB Browser Client'     }
       - { name: ByteBase   , url : 'http://ddl.pigsty'  , comment: 'ByteBase Schema Migrator' }
@@ -110,15 +133,15 @@ all:
       - { name: Minio      , url : 'http://sss.pigsty'  , comment: 'Minio Object Storage'     }
       - { name: Wiki       , url : 'http://wiki.pigsty' , comment: 'Local Wikipedia'          }
       - { name: Explain    , url : '/pigsty/pev.html'   , comment: 'pgsql explain visualizer' }
-      - { name: Package    , url : '/pigsty'            , comment: 'local yum repo packages'  }
+      - { name: Package    , url : '/pigsty'            , comment: 'local yum repo packages'  }  # 最重要的是，Nginx 还作为本地软件仓库（Yum/Apt）的 Web 服务器，用于存储和分发 Pigsty 的软件包。
       - { name: PG Logs    , url : '/logs'              , comment: 'postgres raw csv logs'    }
       - { name: Schemas    , url : '/schema'            , comment: 'schemaspy summary report' }
       - { name: Reports    , url : '/report'            , comment: 'pgbadger summary report'  }
-    node_timezone: Asia/Hong_Kong     # use Asia/Hong_Kong Timezone
-    node_ntp_servers:                 # NTP servers in /etc/chrony.conf
+    node_timezone: Asia/Hong_Kong     # use Asia/Hong_Kong Timezone  设置节点时区，空字符串表示跳过
+    node_ntp_servers:                 # NTP servers in /etc/chrony.conf  启用chronyd时间同步服务
       - pool cn.pool.ntp.org iburst
       - pool ${admin_ip} iburst       # assume non-admin nodes does not have internet access
     node_etc_hosts: [ '10.10.10.10 h.pigsty a.pigsty p.pigsty g.pigsty sss.pigsty' ]
-    dns_records: [ "${admin_ip} api.pigsty adm.pigsty cli.pigsty ddl.pigsty lab.pigsty git.pigsty sss.pigsty wiki.pigsty" ]
+    dns_records: [ "${admin_ip} api.pigsty adm.pigsty cli.pigsty ddl.pigsty lab.pigsty git.pigsty sss.pigsty wiki.pigsty" ]  # Pigsty 默认会在 Infra 节点上启用 DNSMASQ 服务，用于解析一些辅助域名，例如 h.pigsty a.pigsty p.pigsty g.pigsty 等等，以及可选 MinIO 的 sss.pigsty。 由 dnsmasq 负责解析的动态 DNS 记录，一般用于将一些辅助域名解析到本地，例如 h.pigsty a.pigsty p.pigsty g.pigsty 等等。这些记录会被写入到基础设置节点的 /etc/hosts.d/default 文件中。
     pgbackrest_method: local          # if you want to use minio as backup repo instead of 'local' fs, uncomment this
 ...
